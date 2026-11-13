@@ -93,8 +93,9 @@ $('file').addEventListener('change', async (e) => {
     const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map((r) => { const o = {}; for (const k in r) o[k] = r[k] instanceof Date ? fmtDate(r[k]) : r[k]; return o; });
+    const before = rows.length; rows = rows.filter((r) => !isTotalRow(r)); const removed = before - rows.length;
     headers = rows.length ? Object.keys(rows[0]) : [];
-    $('info').textContent = rows.length + ' safu, nguzo ' + headers.length + ': ' + headers.join(', ');
+    $('info').textContent = rows.length + ' safu, nguzo ' + headers.length + ': ' + headers.join(', ') + (removed ? ' (safu ' + removed + ' za jumla/TOTAL zimeondolewa ili zisichanganye hesabu)' : '');
     $('go').disabled = !rows.length;
   } catch (x) { $('err').textContent = 'Faili halikusomeka. Hakikisha ni Excel au CSV.'; }
 });
@@ -180,6 +181,7 @@ $('word').addEventListener('click', () => {
   a.download = 'Ripoti-Vunja-AI.doc'; a.click();
 });
 $('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
+function isTotalRow(r) { return Object.values(r).some((v) => typeof v === 'string' && /^\s*(grand\s*)?(total|jumla)s?\s*:?\s*$/i.test(v)); }
 function fmtDate(d) { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function dkey(v) {
   if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5); return d.toISOString().slice(0, 10); }
@@ -201,6 +203,8 @@ function computeChart(sp) {
     const mx = Math.max(...rows.map((r) => dkey(r[sp.x])).filter(Boolean).map((k) => Date.parse(k)));
     data = rows.filter((r) => { const k = dkey(r[sp.x]); return k && Date.parse(k) >= mx - (sp.lastDays - 1) * 864e5; });
   }
+  const ex = (sp.exclude || []).map((v) => String(v).toLowerCase());
+  if (ex.length) data = data.filter((r) => !ex.includes(String(r[sp.x]).toLowerCase()));
   const g = {};
   data.forEach((r) => {
     const key = isDate ? dkey(r[sp.x]) : String(r[sp.x]); if (!key) return;
