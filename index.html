@@ -6,9 +6,53 @@
 <title>Vunja AI</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">function add(cls, html) {
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
+function fmtDate(d) { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function dkey(v) {
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5); return d.toISOString().slice(0, 10); }
+  const t = String(v).trim(); let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  if ((m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/))) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  return null;
+}
+function splitCharts(t) {
+  let specs = [];
+  const txt = t.replace(/```charts\s*([\s\S]*?)```/g, (m, j) => { try { specs = specs.concat(JSON.parse(j)); } catch (e) {} return ''; });
+  return { txt: txt.trim(), specs };
+}
+function computeChart(sp) {
+  if (!headers.includes(sp.x) || (sp.agg !== 'count' && !headers.includes(sp.y))) return null;
+  const isDate = rows.filter((r) => dkey(r[sp.x])).length > rows.length * 0.7;
+  let data = rows;
+  if (isDate && sp.lastDays) {
+    const mx = Math.max(...rows.map((r) => dkey(r[sp.x])).filter(Boolean).map((k) => Date.parse(k)));
+    data = rows.filter((r) => { const k = dkey(r[sp.x]); return k && Date.parse(k) >= mx - (sp.lastDays - 1) * 864e5; });
+  }
+  const g = {};
+  data.forEach((r) => {
+    const key = isDate ? dkey(r[sp.x]) : String(r[sp.x]); if (!key) return;
+    const n = Number(r[sp.y]); const o = g[key] || (g[key] = { sum: 0, c: 0 });
+    o.c++; if (!isNaN(n)) o.sum += n;
+  });
+  let e = Object.entries(g).map(([k, o]) => [k, sp.agg === 'count' ? o.c : sp.agg === 'avg' ? o.sum / o.c : o.sum]);
+  if (isDate) e.sort((a, b) => a[0] < b[0] ? -1 : 1);
+  else { e.sort((a, b) => b[1] - a[1]); e = e.slice(0, sp.top || 10); }
+  return { labels: e.map((x) => x[0]), vals: e.map((x) => Math.round(x[1] * 100) / 100) };
+}
+function drawCharts(specs, box) {
+  Chart.defaults.color = getComputedStyle(document.body).color;
+  specs.slice(0, 3).forEach((sp) => {
+    const c = computeChart(sp); if (!c || !c.labels.length) return;
+    const wrap = document.createElement('div'); wrap.className = 'chartbox';
+    const cv = document.createElement('canvas'); wrap.appendChild(cv); box.appendChild(wrap);
+    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
+      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
+  });
+}
+function add(cls, html) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
-  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return d;
 }
 async function ask() {
   const q = $('q').value.trim(); if (!q || !lastPayload) return;
@@ -21,7 +65,7 @@ async function ask() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Imeshindwa');
     history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
-    add('ai', md(d.report));
+    const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
   } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
   $('send').disabled = false;
 }
@@ -58,6 +102,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .msg.ai{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
 .msg p{margin:.3em 0}
 .chatrow{display:flex;gap:10px}.chatrow textarea{min-height:48px}
+.chartbox{margin:18px 0;padding:10px;border:1px solid var(--line);border-radius:10px}
 </style>
 </head>
 <body>
@@ -85,6 +130,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 
 <section class="panel" id="result" hidden>
   <div id="out"></div>
+  <div id="charts"></div>
   <div class="actions">
     <button class="alt" id="word">Pakua kama Word</button>
     <button class="alt" id="copy">Nakili ripoti</button>
@@ -102,15 +148,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 
 <script>
 const $ = (id) => document.getElementById(id);
-let rows = [], headers = [], reportMd = '', lastPayload = null, history = [];
+let rows = [], headers = [], reportMd = '', lastPayload = null, history = [], lastSpecs = [];
 
 $('file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; if (!f) return;
   $('err').textContent = '';
   try {
-    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map((r) => { const o = {}; for (const k in r) o[k] = r[k] instanceof Date ? fmtDate(r[k]) : r[k]; return o; });
     headers = rows.length ? Object.keys(rows[0]) : [];
     $('info').textContent = rows.length + ' safu, nguzo ' + headers.length + ': ' + headers.join(', ');
     $('go').disabled = !rows.length;
@@ -134,14 +180,15 @@ function stats() {
 $('go').addEventListener('click', async () => {
   $('go').disabled = true; $('go').textContent = 'Inachambua...'; $('err').textContent = '';
   try {
-    const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows.slice(0, 150)));
+    const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows.slice(0, 400)));
     const r = await fetch('/api/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lastPayload = { summary: 'Jumla ya safu: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: $('lang').value })
+      body: JSON.stringify(lastPayload = { summary: 'Jumla ya safu: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: $('lang').value, columns: headers })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Imeshindwa');
-    reportMd = d.report; $('out').innerHTML = md(reportMd); $('result').hidden = false;
+    const sp = splitCharts(d.report); lastSpecs = sp.specs; reportMd = sp.txt; $('out').innerHTML = md(reportMd);
+    $('charts').innerHTML = ''; drawCharts(sp.specs, $('charts')); $('result').hidden = false;
     history = [{ role: 'model', text: d.report }]; $('log').innerHTML = ''; $('chat').hidden = false;
     $('result').scrollIntoView({ behavior: 'smooth' });
   } catch (x) { $('err').textContent = 'Kosa: ' + x.message; }
@@ -170,15 +217,36 @@ function md(t) {
 }
 
 $('word').addEventListener('click', () => {
-  const html = '<html><head><meta charset="utf-8"><title>Ripoti</title></head><body>' + $('out').innerHTML + '</body></html>';
+  const imgs = [];
+  const prevColor = Chart.defaults.color; Chart.defaults.color = '#000';
+  lastSpecs.slice(0, 3).forEach((sp) => {
+    const c = computeChart(sp); if (!c || !c.labels.length) return;
+    const cv = document.createElement('canvas'); cv.width = 900; cv.height = 450;
+    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
+      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      options: { animation: false, responsive: false, devicePixelRatio: 1, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } },
+      plugins: [{ id: 'bg', beforeDraw(ch) { const x = ch.ctx; x.save(); x.globalCompositeOperation = 'destination-over'; x.fillStyle = '#fff'; x.fillRect(0, 0, ch.width, ch.height); x.restore(); } }] });
+    imgs.push({ title: sp.title || 'Grafu', data: cv.toDataURL('image/png').split(',')[1] });
+  });
+  Chart.defaults.color = prevColor;
+  const css = 'body{font-family:Calibri,Arial,sans-serif}table{border-collapse:collapse}td,th{border:1px solid #888;padding:4px 8px}th{background:#e8edf3}';
+  const figs = imgs.map((im, i) => '<p><b>' + esc(im.title) + '</b></p><p><img src="chart' + (i + 1) + '.png" width="600" height="300"></p>').join('');
+  const html = '<html><head><meta charset="utf-8"><title>Ripoti</title><style>' + css + '</style></head><body>' + $('out').innerHTML + figs + '</body></html>';
+  const b = '----=_NextPart_VunjaAI';
+  let mht = 'MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="' + b + '"; type="text/html"\r\n\r\n';
+  mht += '--' + b + '\r\nContent-Type: text/html; charset="utf-8"\r\nContent-Transfer-Encoding: 8bit\r\nContent-Location: file:///report.htm\r\n\r\n' + html + '\r\n';
+  imgs.forEach((im, i) => {
+    mht += '--' + b + '\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-Location: chart' + (i + 1) + '.png\r\n\r\n' + im.data.replace(/(.{76})/g, '$1\r\n') + '\r\n';
+  });
+  mht += '--' + b + '--';
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['\ufeff' + html], { type: 'application/msword' }));
+  a.href = URL.createObjectURL(new Blob([mht], { type: 'application/msword' }));
   a.download = 'Ripoti-Vunja-AI.doc'; a.click();
 });
 $('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
 function add(cls, html) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
-  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return d;
 }
 async function ask() {
   const q = $('q').value.trim(); if (!q || !lastPayload) return;
@@ -191,7 +259,7 @@ async function ask() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Imeshindwa');
     history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
-    add('ai', md(d.report));
+    const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
   } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
   $('send').disabled = false;
 }
