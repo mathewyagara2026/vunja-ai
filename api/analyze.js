@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
 
   const chatSystem =
     'Wewe ni Vunja AI, mchambuzi wa takwimu. Mtumiaji anakuuliza maswali kuhusu data yake na ripoti uliyoandika. ' +
-    'Jibu kwa ' + language + ', kwa ufupi na kwa uwazi, ukitumia namba kutoka kwenye data. ' +
+    'Jibu kwa lugha ile ile aliyotumia mtumiaji kwenye swali lake, kwa ufupi na kwa uwazi, ukitumia namba kutoka kwenye data. ' +
     'Usibuni namba. Ikiwa data haina jibu, sema wazi.';
 
   const reportSystem =
@@ -38,6 +38,7 @@ module.exports = async (req, res) => {
     '```charts\n[{"title":"Kichwa","type":"bar","x":"JINA LA NGUZO","y":"JINA LA NGUZO YA NAMBA","agg":"sum","top":5,"lastDays":10}]\n```. ' +
     'type ni bar au line. agg ni sum, avg au count. "top" (hiari) ni idadi ya vipengele vya juu. ' +
     '"lastDays" (hiari) ni siku za mwisho, tumia tu kama x ni nguzo ya tarehe. ' +
+    '"exclude" (hiari) ni orodha ya thamani za x zisizotakiwa kwenye grafu, mfano ["TOTAL"]. ' +
     'Tumia majina ya nguzo kama yalivyo hasa kwenye NGUZO ZILIZOPO. Usiandike namba za grafu mwenyewe; programu itazihesabu. Ongeza grafu 1 hadi 3.';
 
   const models = [model, 'gemini-flash-lite-latest'];
