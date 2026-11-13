@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{--bg:#eef2f6;--ink:#14213d;--muted:#5b6678;--line:#cfd8e3;--card:#fff;--teal:#0f7b6c;--saffron:#f4a300}
 @media(prefers-color-scheme:dark){:root{--bg:#0e1626;--ink:#e8eef7;--muted:#9aa7ba;--line:#26344d;--card:#16213a;--teal:#38c2ad;--saffron:#f4b73a}}
@@ -153,7 +154,7 @@ function md(t) {
   endList(); endTbl(); return h;
 }
 
-$('word').addEventListener('click', () => {
+$('word').addEventListener('click', async () => {
   const imgs = [];
   const prevColor = Chart.defaults.color; Chart.defaults.color = '#000';
   lastSpecs.slice(0, 3).forEach((sp) => {
@@ -166,19 +167,10 @@ $('word').addEventListener('click', () => {
     imgs.push({ title: sp.title || 'Grafu', data: cv.toDataURL('image/png').split(',')[1] });
   });
   Chart.defaults.color = prevColor;
-  const css = 'body{font-family:Calibri,Arial,sans-serif}table{border-collapse:collapse}td,th{border:1px solid #888;padding:4px 8px}th{background:#e8edf3}';
-  const figs = imgs.map((im, i) => '<p><b>' + esc(im.title) + '</b></p><p><img src="chart' + (i + 1) + '.png" width="600" height="300"></p>').join('');
-  const html = '<html><head><meta charset="utf-8"><title>Ripoti</title><style>' + css + '</style></head><body>' + $('out').innerHTML + figs + '</body></html>';
-  const b = '----=_NextPart_VunjaAI';
-  let mht = 'MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="' + b + '"; type="text/html"\r\n\r\n';
-  mht += '--' + b + '\r\nContent-Type: text/html; charset="utf-8"\r\nContent-Transfer-Encoding: 8bit\r\nContent-Location: file:///report.htm\r\n\r\n' + html + '\r\n';
-  imgs.forEach((im, i) => {
-    mht += '--' + b + '\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-Location: chart' + (i + 1) + '.png\r\n\r\n' + im.data.replace(/(.{76})/g, '$1\r\n') + '\r\n';
-  });
-  mht += '--' + b + '--';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([mht], { type: 'application/msword' }));
-  a.download = 'Ripoti-Vunja-AI.doc'; a.click();
+  try {
+    const blob = await buildDocx(reportMd, imgs, JSZip).generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Ripoti-Vunja-AI.docx'; a.click();
+  } catch (x) { $('err').textContent = 'Kosa la kutengeneza Word: ' + x.message; }
 });
 $('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
 function isTotalRow(r) { return Object.values(r).some((v) => typeof v === 'string' && /^\s*(grand\s*)?(total|jumla)s?\s*:?\s*$/i.test(v)); }
@@ -226,6 +218,57 @@ function drawCharts(specs, box) {
       data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
       options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
   });
+}
+
+function xe(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function wRuns(t, o) {
+  o = o || {}; const out = []; const re = /(\*\*[^*]+\*\*|\*[^*]+\*)/g; let last = 0, m;
+  const push = (x, b, i) => { if (!x) return; out.push('<w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>' + ((b || o.b) ? '<w:b/>' : '') + (i ? '<w:i/>' : '') + '<w:sz w:val="' + (o.sz || 22) + '"/></w:rPr><w:t xml:space="preserve">' + xe(x) + '</w:t></w:r>'); };
+  while ((m = re.exec(t))) { push(t.slice(last, m.index)); if (m[0].startsWith('**')) push(m[0].slice(2, -2), 1, 0); else push(m[0].slice(1, -1), 0, 1); last = m.index + m[0].length; }
+  push(t.slice(last)); return out.join('');
+}
+function wPara(t, o, ppr) { return '<w:p>' + (ppr ? '<w:pPr>' + ppr + '</w:pPr>' : '') + wRuns(t, o) + '</w:p>'; }
+function mdToDocx(md) {
+  let x = '', tbl = [];
+  const flush = () => {
+    if (!tbl.length) return;
+    const rws = tbl.filter((l) => !/^\s*\|?[\s:-]+\|[\s|:-]*$/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+    const n = Math.max(...rws.map((r) => r.length)), gw = Math.floor(9400 / n);
+    x += '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((k) => '<w:' + k + ' w:val="single" w:sz="4" w:space="0" w:color="888888"/>').join('') + '</w:tblBorders></w:tblPr><w:tblGrid>' + '<w:gridCol w:w="' + gw + '"/>'.repeat(n) + '</w:tblGrid>';
+    rws.forEach((r, i) => {
+      x += '<w:tr>';
+      for (let c = 0; c < n; c++) x += '<w:tc><w:tcPr><w:tcW w:w="' + gw + '" w:type="dxa"/>' + (i === 0 ? '<w:shd w:val="clear" w:color="auto" w:fill="E8EDF3"/>' : '') + '</w:tcPr>' + wPara(r[c] || '', { b: i === 0, sz: 20 }, '<w:spacing w:after="0"/>') + '</w:tc>';
+      x += '</w:tr>';
+    });
+    x += '</w:tbl><w:p/>'; tbl = [];
+  };
+  for (const l of md.split('\n')) {
+    if (/^\s*\|/.test(l)) { tbl.push(l); continue; } else flush();
+    if (/^#{1,3}\s/.test(l)) x += wPara(l.replace(/^#+\s*/, ''), { b: 1, sz: /^###/.test(l) ? 24 : 28 }, '<w:keepNext/><w:spacing w:before="240" w:after="80"/>');
+    else if (/^\s*[-*]\s+/.test(l)) x += wPara('\u2022 ' + l.replace(/^\s*[-*]\s+/, ''), {}, '<w:spacing w:after="40"/><w:ind w:left="360" w:hanging="260"/>');
+    else if (l.trim()) x += wPara(l, {}, '<w:spacing w:after="100"/>');
+  }
+  flush(); return x;
+}
+function wImg(rid, id) {
+  const cx = 5486400, cy = 2743200;
+  return '<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Grafu ' + id + '"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="' + id + '" name="chart' + id + '.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+}
+function buildDocx(md, imgs, JSZipLib) {
+  const z = new JSZipLib();
+  const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
+  let body = wPara('Ripoti ya Vunja AI', { b: 1, sz: 36 }, '<w:spacing w:after="60"/>') + wPara(fmtDate(new Date()), { sz: 20 }, '<w:spacing w:after="200"/>') + mdToDocx(md);
+  let rels = '';
+  imgs.forEach((im, i) => {
+    body += wPara(im.title, { b: 1 }, '<w:keepNext/><w:spacing w:before="240" w:after="80"/>') + wImg('rIdImg' + (i + 1), i + 1);
+    rels += '<Relationship Id="rIdImg' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/chart' + (i + 1) + '.png"/>';
+    z.file('word/media/chart' + (i + 1) + '.png', im.data, { base64: true });
+  });
+  z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  z.file('word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>');
+  z.file('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ' + NS + '><w:body>' + body + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
+  return z;
 }
 function add(cls, html) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
