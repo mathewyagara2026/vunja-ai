@@ -6,72 +6,8 @@
 <title>Vunja AI</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
-function fmtDate(d) { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
-function dkey(v) {
-  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5); return d.toISOString().slice(0, 10); }
-  const t = String(v).trim(); let m;
-  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
-  if ((m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/))) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
-  return null;
-}
-function splitCharts(t) {
-  let specs = [];
-  const txt = t.replace(/```charts\s*([\s\S]*?)```/g, (m, j) => { try { specs = specs.concat(JSON.parse(j)); } catch (e) {} return ''; });
-  return { txt: txt.trim(), specs };
-}
-function computeChart(sp) {
-  if (!headers.includes(sp.x) || (sp.agg !== 'count' && !headers.includes(sp.y))) return null;
-  const isDate = rows.filter((r) => dkey(r[sp.x])).length > rows.length * 0.7;
-  let data = rows;
-  if (isDate && sp.lastDays) {
-    const mx = Math.max(...rows.map((r) => dkey(r[sp.x])).filter(Boolean).map((k) => Date.parse(k)));
-    data = rows.filter((r) => { const k = dkey(r[sp.x]); return k && Date.parse(k) >= mx - (sp.lastDays - 1) * 864e5; });
-  }
-  const g = {};
-  data.forEach((r) => {
-    const key = isDate ? dkey(r[sp.x]) : String(r[sp.x]); if (!key) return;
-    const n = Number(r[sp.y]); const o = g[key] || (g[key] = { sum: 0, c: 0 });
-    o.c++; if (!isNaN(n)) o.sum += n;
-  });
-  let e = Object.entries(g).map(([k, o]) => [k, sp.agg === 'count' ? o.c : sp.agg === 'avg' ? o.sum / o.c : o.sum]);
-  if (isDate) e.sort((a, b) => a[0] < b[0] ? -1 : 1);
-  else { e.sort((a, b) => b[1] - a[1]); e = e.slice(0, sp.top || 10); }
-  return { labels: e.map((x) => x[0]), vals: e.map((x) => Math.round(x[1] * 100) / 100) };
-}
-function drawCharts(specs, box) {
-  Chart.defaults.color = getComputedStyle(document.body).color;
-  specs.slice(0, 3).forEach((sp) => {
-    const c = computeChart(sp); if (!c || !c.labels.length) return;
-    const wrap = document.createElement('div'); wrap.className = 'chartbox';
-    const cv = document.createElement('canvas'); wrap.appendChild(cv); box.appendChild(wrap);
-    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
-      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
-      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
-  });
-}
-function add(cls, html) {
-  const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
-  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return d;
-}
-async function ask() {
-  const q = $('q').value.trim(); if (!q || !lastPayload) return;
-  $('q').value = ''; add('me', esc(q)); $('send').disabled = true;
-  try {
-    const r = await fetch('/api/analyze', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({}, lastPayload, { history, question: q }))
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Imeshindwa');
-    history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
-    const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
-  } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
-  $('send').disabled = false;
-}
-$('send').addEventListener('click', ask);
-$('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{--bg:#eef2f6;--ink:#14213d;--muted:#5b6678;--line:#cfd8e3;--card:#fff;--teal:#0f7b6c;--saffron:#f4a300}
 @media(prefers-color-scheme:dark){:root{--bg:#0e1626;--ink:#e8eef7;--muted:#9aa7ba;--line:#26344d;--card:#16213a;--teal:#38c2ad;--saffron:#f4b73a}}
@@ -244,6 +180,49 @@ $('word').addEventListener('click', () => {
   a.download = 'Ripoti-Vunja-AI.doc'; a.click();
 });
 $('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
+function fmtDate(d) { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function dkey(v) {
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 864e5); return d.toISOString().slice(0, 10); }
+  const t = String(v).trim(); let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  if ((m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/))) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  return null;
+}
+function splitCharts(t) {
+  let specs = [];
+  const txt = t.replace(/```charts\s*([\s\S]*?)```/g, (m, j) => { try { specs = specs.concat(JSON.parse(j)); } catch (e) {} return ''; });
+  return { txt: txt.trim(), specs };
+}
+function computeChart(sp) {
+  if (!headers.includes(sp.x) || (sp.agg !== 'count' && !headers.includes(sp.y))) return null;
+  const isDate = rows.filter((r) => dkey(r[sp.x])).length > rows.length * 0.7;
+  let data = rows;
+  if (isDate && sp.lastDays) {
+    const mx = Math.max(...rows.map((r) => dkey(r[sp.x])).filter(Boolean).map((k) => Date.parse(k)));
+    data = rows.filter((r) => { const k = dkey(r[sp.x]); return k && Date.parse(k) >= mx - (sp.lastDays - 1) * 864e5; });
+  }
+  const g = {};
+  data.forEach((r) => {
+    const key = isDate ? dkey(r[sp.x]) : String(r[sp.x]); if (!key) return;
+    const n = Number(r[sp.y]); const o = g[key] || (g[key] = { sum: 0, c: 0 });
+    o.c++; if (!isNaN(n)) o.sum += n;
+  });
+  let e = Object.entries(g).map(([k, o]) => [k, sp.agg === 'count' ? o.c : sp.agg === 'avg' ? o.sum / o.c : o.sum]);
+  if (isDate) e.sort((a, b) => a[0] < b[0] ? -1 : 1);
+  else { e.sort((a, b) => b[1] - a[1]); e = e.slice(0, sp.top || 10); }
+  return { labels: e.map((x) => x[0]), vals: e.map((x) => Math.round(x[1] * 100) / 100) };
+}
+function drawCharts(specs, box) {
+  Chart.defaults.color = getComputedStyle(document.body).color;
+  specs.slice(0, 3).forEach((sp) => {
+    const c = computeChart(sp); if (!c || !c.labels.length) return;
+    const wrap = document.createElement('div'); wrap.className = 'chartbox';
+    const cv = document.createElement('canvas'); wrap.appendChild(cv); box.appendChild(wrap);
+    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
+      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
+  });
+}
 function add(cls, html) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
   $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return d;
