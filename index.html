@@ -6,7 +6,28 @@
 <title>Vunja AI</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">function add(cls, html) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
+  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+async function ask() {
+  const q = $('q').value.trim(); if (!q || !lastPayload) return;
+  $('q').value = ''; add('me', esc(q)); $('send').disabled = true;
+  try {
+    const r = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, lastPayload, { history, question: q }))
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Imeshindwa');
+    history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
+    add('ai', md(d.report));
+  } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
+  $('send').disabled = false;
+}
+$('send').addEventListener('click', ask);
+$('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+</script>
 <style>
 :root{--bg:#eef2f6;--ink:#14213d;--muted:#5b6678;--line:#cfd8e3;--card:#fff;--teal:#0f7b6c;--saffron:#f4a300}
 @media(prefers-color-scheme:dark){:root{--bg:#0e1626;--ink:#e8eef7;--muted:#9aa7ba;--line:#26344d;--card:#16213a;--teal:#38c2ad;--saffron:#f4b73a}}
@@ -31,6 +52,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 #out th,#out td{border:1px solid var(--line);padding:6px 10px;text-align:left}
 #out th{background:var(--bg)}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+#log{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.msg{padding:10px 14px;border-radius:10px;max-width:92%}
+.msg.me{align-self:flex-end;background:var(--teal);color:#fff}
+.msg.ai{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.msg p{margin:.3em 0}
+.chatrow{display:flex;gap:10px}.chatrow textarea{min-height:48px}
 </style>
 </head>
 <body>
@@ -63,11 +90,19 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
     <button class="alt" id="copy">Nakili ripoti</button>
   </div>
 </section>
+<section class="panel" id="chat" hidden>
+  <label for="q">Uliza Vunja AI kuhusu data yako</label>
+  <div id="log" aria-live="polite"></div>
+  <div class="chatrow">
+    <textarea id="q" placeholder="Mfano: Mteja gani amenunua zaidi mwezi huu?"></textarea>
+    <button id="send">Tuma</button>
+  </div>
+</section>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let rows = [], headers = [], reportMd = '';
+let rows = [], headers = [], reportMd = '', lastPayload = null, history = [];
 
 $('file').addEventListener('change', async (e) => {
   const f = e.target.files[0]; if (!f) return;
@@ -102,11 +137,12 @@ $('go').addEventListener('click', async () => {
     const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows.slice(0, 150)));
     const r = await fetch('/api/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ summary: 'Jumla ya safu: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: $('lang').value })
+      body: JSON.stringify(lastPayload = { summary: 'Jumla ya safu: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: $('lang').value })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Imeshindwa');
     reportMd = d.report; $('out').innerHTML = md(reportMd); $('result').hidden = false;
+    history = [{ role: 'model', text: d.report }]; $('log').innerHTML = ''; $('chat').hidden = false;
     $('result').scrollIntoView({ behavior: 'smooth' });
   } catch (x) { $('err').textContent = 'Kosa: ' + x.message; }
   $('go').disabled = false; $('go').textContent = 'Chambua data';
@@ -140,6 +176,27 @@ $('word').addEventListener('click', () => {
   a.download = 'Ripoti-Vunja-AI.doc'; a.click();
 });
 $('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
+function add(cls, html) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
+  $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+async function ask() {
+  const q = $('q').value.trim(); if (!q || !lastPayload) return;
+  $('q').value = ''; add('me', esc(q)); $('send').disabled = true;
+  try {
+    const r = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, lastPayload, { history, question: q }))
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Imeshindwa');
+    history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
+    add('ai', md(d.report));
+  } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
+  $('send').disabled = false;
+}
+$('send').addEventListener('click', ask);
+$('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
 </script>
 </body>
 </html>
