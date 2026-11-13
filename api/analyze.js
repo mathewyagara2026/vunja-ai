@@ -5,13 +5,18 @@ module.exports = async (req, res) => {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return res.status(500).json({ error: 'GEMINI_API_KEY haijawekwa kwenye Vercel.' });
 
-  const { summary, sample, request, lang } = req.body || {};
+  const { summary, sample, request, lang, history, question } = req.body || {};
   if (!sample) return res.status(400).json({ error: 'Hakuna data iliyotumwa.' });
 
   const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
   const language = lang === 'en' ? 'Kiingereza' : 'Kiswahili';
 
-  const system =
+  const chatSystem =
+    'Wewe ni Vunja AI, mchambuzi wa takwimu. Mtumiaji anakuuliza maswali kuhusu data yake na ripoti uliyoandika. ' +
+    'Jibu kwa ' + language + ', kwa ufupi na kwa uwazi, ukitumia namba kutoka kwenye data. ' +
+    'Usibuni namba. Ikiwa data haina jibu, sema wazi.';
+
+  const reportSystem =
     'Wewe ni Vunja AI, mchambuzi wa takwimu. Unapewa muhtasari wa hesabu na sampuli ya data. ' +
     'Andika ripoti kwa ' + language + ' yenye sehemu hizi: Muhtasari, Matokeo Muhimu (kwa namba), ' +
     'Mwenendo na Mifumo, Mambo ya Kushangaza au Makosa kwenye data, Mapendekezo. ' +
@@ -23,6 +28,10 @@ module.exports = async (req, res) => {
     '\n\nMUHTASARI WA HESABU (kutoka kwenye data yote):\n' + summary +
     '\n\nSAMPULI YA DATA (CSV):\n' + sample;
 
+  const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+  (history || []).forEach((h) => contents.push({ role: h.role, parts: [{ text: h.text }] }));
+  if (question) contents.push({ role: 'user', parts: [{ text: question }] });
+
   try {
     const r = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
@@ -30,8 +39,8 @@ module.exports = async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          systemInstruction: { parts: [{ text: question ? chatSystem : reportSystem }] },
+          contents: contents,
         }),
       }
     );
