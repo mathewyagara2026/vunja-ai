@@ -48,8 +48,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 <p class="lead">Upload your statistics file. Vunja AI analyzes it and writes a report you can download.</p>
 
 <section class="panel">
-  <label for="file">Data file (Excel or CSV)</label>
-  <input id="file" type="file" accept=".xlsx,.xls,.csv">
+  <label for="file">Data files (Excel or CSV — select several; every sheet is read)</label>
+  <input id="file" type="file" accept=".xlsx,.xls,.csv" multiple>
   <p id="info">No file selected.</p>
   <div class="row" style="margin-top:14px">
     <div>
@@ -84,18 +84,41 @@ const $ = (id) => document.getElementById(id);
 let rows = [], headers = [], reportMd = '', lastPayload = null, history = [], lastSpecs = [];
 
 $('file').addEventListener('change', async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  $('err').textContent = '';
+  const files = Array.from(e.target.files); if (!files.length) return;
+  $('err').textContent = ''; $('go').disabled = true;
   try {
-    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map((r) => { const o = {}; for (const k in r) o[k] = r[k] instanceof Date ? fmtDate(r[k]) : r[k]; return o; });
-    const before = rows.length; rows = rows.filter((r) => !isTotalRow(r)); const removed = before - rows.length;
-    headers = rows.length ? Object.keys(rows[0]) : [];
-    $('info').textContent = rows.length + ' rows, ' + headers.length + ' columns: ' + headers.join(', ') + (removed ? ' (' + removed + ' TOTAL/summary row(s) removed so they don’t distort the numbers)' : '');
+    const parts = [];
+    for (const f of files) {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+      const fp = [];
+      wb.SheetNames.forEach((sn) => {
+        const r = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: '' });
+        if (r.length) fp.push({ file: f.name, sheet: sn, rows: r });
+      });
+      fp.forEach((x) => { x.n = fp.length; parts.push(x); });
+    }
+    const multiSheet = parts.some((x) => x.n > 1);
+    let all = [], colSets = [];
+    parts.forEach((x) => {
+      colSets.push(Object.keys(x.rows[0]).sort().join('|'));
+      all = all.concat(x.rows.map((r) => {
+        const o = {}; for (const k in r) o[k] = r[k] instanceof Date ? fmtDate(r[k]) : r[k];
+        if (files.length > 1) o['Source file'] = x.file;
+        if (multiSheet) o['Source sheet'] = x.sheet;
+        return o;
+      }));
+    });
+    const before = all.length; all = all.filter((r) => !isTotalRow(r)); const removed = before - all.length;
+    headers = []; all.forEach((r) => Object.keys(r).forEach((k) => { if (!headers.includes(k)) headers.push(k); }));
+    rows = all.map((r) => { const o = {}; headers.forEach((h) => { o[h] = h in r ? r[h] : ''; }); return o; });
+    const same = colSets.every((c) => c === colSets[0]);
+    $('info').textContent = (parts.length > 1 ? parts.length + ' sheets from ' + files.length + ' file(s) combined, ' : '') + rows.length + ' rows, ' + headers.length + ' columns: ' + headers.join(', ') +
+      (removed ? ' (' + removed + ' TOTAL/summary row(s) removed so they don’t distort the numbers)' : '') +
+      (!same ? ' Note: the sheets have different columns, so they were matched by column name.' : '');
     $('go').disabled = !rows.length;
-  } catch (x) { $('err').textContent = 'Could not read the file. Make sure it is Excel or CSV.'; }
+  } catch (x) { $('err').textContent = 'Could not read one of the files. Make sure they are Excel or CSV.'; }
 });
+function sampleRows() { const step = Math.max(1, Math.ceil(rows.length / 400)); return rows.filter((_, i) => i % step === 0); }
 
 function stats() {
   return headers.map((h) => {
@@ -114,7 +137,7 @@ function stats() {
 $('go').addEventListener('click', async () => {
   $('go').disabled = true; $('go').textContent = 'Analyzing...'; $('err').textContent = '';
   try {
-    const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows.slice(0, 400)));
+    const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(sampleRows()));
     const r = await fetch('/api/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(lastPayload = { summary: 'Total rows: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: 'en', columns: headers })
