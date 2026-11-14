@@ -142,8 +142,8 @@ $('go').addEventListener('click', async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(lastPayload = { summary: 'Total rows: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: 'en', columns: headers })
     });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Failed');
+    const d = await readJson(r);
+    if (!r.ok || d.error) throw new Error(d.error || 'Failed');
     const sp = splitCharts(d.report); lastSpecs = sp.specs; reportMd = sp.txt; $('out').innerHTML = md(reportMd);
     $('charts').innerHTML = ''; drawCharts(sp.specs, $('charts')); $('result').hidden = false;
     history = [{ role: 'model', text: d.report }]; $('log').innerHTML = ''; $('chat').hidden = false;
@@ -289,6 +289,12 @@ function buildDocx(md, imgs, JSZipLib) {
   z.file('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ' + NS + '><w:body>' + body + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
   return z;
 }
+async function readJson(r) {
+  const t = await r.text();
+  try { return JSON.parse(t); } catch (e) {
+    return { error: (r.status === 504 || /timeout|timed out/i.test(t)) ? 'The server took too long to answer. Please try again.' : 'Server error (' + r.status + '). Please try again in a moment. If it keeps happening, check the Logs in Vercel.' };
+  }
+}
 function add(cls, html) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html;
   $('log').appendChild(d); d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return d;
@@ -301,8 +307,8 @@ async function ask() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({}, lastPayload, { history, question: q }))
     });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Failed');
+    const d = await readJson(r);
+    if (!r.ok || d.error) throw new Error(d.error || 'Failed');
     history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
     const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
   } catch (x) { add('ai', 'Error: ' + esc(x.message)); }
