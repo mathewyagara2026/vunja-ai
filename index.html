@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="sw">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,23 +45,19 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 <body>
 <main>
 <h1>Vunja <span>AI</span></h1>
-<p class="lead">Pakia faili la takwimu zako. Vunja AI inazichambua na kukuandikia ripoti unayoweza kupakua.</p>
+<p class="lead">Upload your statistics file. Vunja AI analyzes it and writes a report you can download.</p>
 
 <section class="panel">
-  <label for="file">Faili la data (Excel au CSV)</label>
+  <label for="file">Data file (Excel or CSV)</label>
   <input id="file" type="file" accept=".xlsx,.xls,.csv">
-  <p id="info">Hakuna faili lililochaguliwa.</p>
+  <p id="info">No file selected.</p>
   <div class="row" style="margin-top:14px">
     <div>
-      <label for="req">Unataka nini kichambuliwe?</label>
-      <textarea id="req" placeholder="Mfano: Linganisha mauzo kwa mwezi na nionyeshe bidhaa zinazouzika zaidi."></textarea>
-    </div>
-    <div style="max-width:200px">
-      <label for="lang">Lugha ya ripoti</label>
-      <select id="lang"><option value="sw">Kiswahili</option><option value="en">Kiingereza</option></select>
+      <label for="req">What do you want analyzed?</label>
+      <textarea id="req" placeholder="Example: Compare sales by month and show the best-selling products."></textarea>
     </div>
   </div>
-  <div class="actions"><button id="go" disabled>Chambua data</button></div>
+  <div class="actions"><button id="go" disabled>Analyze data</button></div>
   <p id="err" role="alert"></p>
 </section>
 
@@ -69,16 +65,16 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
   <div id="out"></div>
   <div id="charts"></div>
   <div class="actions">
-    <button class="alt" id="word">Pakua kama Word</button>
-    <button class="alt" id="copy">Nakili ripoti</button>
+    <button class="alt" id="word">Download as Word</button>
+    <button class="alt" id="copy">Copy report</button>
   </div>
 </section>
 <section class="panel" id="chat" hidden>
-  <label for="q">Uliza Vunja AI kuhusu data yako</label>
+  <label for="q">Ask Vunja AI about your data</label>
   <div id="log" aria-live="polite"></div>
   <div class="chatrow">
-    <textarea id="q" placeholder="Mfano: Mteja gani amenunua zaidi mwezi huu?"></textarea>
-    <button id="send">Tuma</button>
+    <textarea id="q" placeholder="Example: Which customer bought the most this month?"></textarea>
+    <button id="send">Send</button>
   </div>
 </section>
 </main>
@@ -96,9 +92,9 @@ $('file').addEventListener('change', async (e) => {
     rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }).map((r) => { const o = {}; for (const k in r) o[k] = r[k] instanceof Date ? fmtDate(r[k]) : r[k]; return o; });
     const before = rows.length; rows = rows.filter((r) => !isTotalRow(r)); const removed = before - rows.length;
     headers = rows.length ? Object.keys(rows[0]) : [];
-    $('info').textContent = rows.length + ' safu, nguzo ' + headers.length + ': ' + headers.join(', ') + (removed ? ' (safu ' + removed + ' za jumla/TOTAL zimeondolewa ili zisichanganye hesabu)' : '');
+    $('info').textContent = rows.length + ' rows, ' + headers.length + ' columns: ' + headers.join(', ') + (removed ? ' (' + removed + ' TOTAL/summary row(s) removed so they don’t distort the numbers)' : '');
     $('go').disabled = !rows.length;
-  } catch (x) { $('err').textContent = 'Faili halikusomeka. Hakikisha ni Excel au CSV.'; }
+  } catch (x) { $('err').textContent = 'Could not read the file. Make sure it is Excel or CSV.'; }
 });
 
 function stats() {
@@ -107,30 +103,30 @@ function stats() {
     const nums = vals.map(Number).filter((n, i) => vals[i] !== '' && !isNaN(n));
     if (nums.length > vals.length * 0.7) {
       const sum = nums.reduce((a, b) => a + b, 0);
-      return h + ': namba, idadi=' + nums.length + ', jumla=' + sum.toFixed(2) + ', wastani=' + (sum / nums.length).toFixed(2) + ', chini=' + Math.min(...nums) + ', juu=' + Math.max(...nums);
+      return h + ': number, count=' + nums.length + ', sum=' + sum.toFixed(2) + ', mean=' + (sum / nums.length).toFixed(2) + ', min=' + Math.min(...nums) + ', max=' + Math.max(...nums);
     }
     const c = {}; vals.forEach((v) => { c[v] = (c[v] || 0) + 1; });
     const top = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => k + '(' + n + ')').join(', ');
-    return h + ': maandishi, tofauti=' + Object.keys(c).length + ', za juu: ' + top;
+    return h + ': text, distinct=' + Object.keys(c).length + ', top: ' + top;
   }).join('\n');
 }
 
 $('go').addEventListener('click', async () => {
-  $('go').disabled = true; $('go').textContent = 'Inachambua...'; $('err').textContent = '';
+  $('go').disabled = true; $('go').textContent = 'Analyzing...'; $('err').textContent = '';
   try {
     const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows.slice(0, 400)));
     const r = await fetch('/api/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lastPayload = { summary: 'Jumla ya safu: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: $('lang').value, columns: headers })
+      body: JSON.stringify(lastPayload = { summary: 'Total rows: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: 'en', columns: headers })
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Imeshindwa');
+    if (!r.ok) throw new Error(d.error || 'Failed');
     const sp = splitCharts(d.report); lastSpecs = sp.specs; reportMd = sp.txt; $('out').innerHTML = md(reportMd);
     $('charts').innerHTML = ''; drawCharts(sp.specs, $('charts')); $('result').hidden = false;
     history = [{ role: 'model', text: d.report }]; $('log').innerHTML = ''; $('chat').hidden = false;
     $('result').scrollIntoView({ behavior: 'smooth' });
-  } catch (x) { $('err').textContent = 'Kosa: ' + x.message; }
-  $('go').disabled = false; $('go').textContent = 'Chambua data';
+  } catch (x) { $('err').textContent = 'Error: ' + x.message; }
+  $('go').disabled = false; $('go').textContent = 'Analyze data';
 });
 
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
@@ -161,18 +157,18 @@ $('word').addEventListener('click', async () => {
     const c = computeChart(sp); if (!c || !c.labels.length) return;
     const cv = document.createElement('canvas'); cv.width = 900; cv.height = 450;
     new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
-      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      data: { labels: c.labels, datasets: [{ label: sp.y || 'Count', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
       options: { animation: false, responsive: false, devicePixelRatio: 1, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } },
       plugins: [{ id: 'bg', beforeDraw(ch) { const x = ch.ctx; x.save(); x.globalCompositeOperation = 'destination-over'; x.fillStyle = '#fff'; x.fillRect(0, 0, ch.width, ch.height); x.restore(); } }] });
-    imgs.push({ title: sp.title || 'Grafu', data: cv.toDataURL('image/png').split(',')[1] });
+    imgs.push({ title: sp.title || 'Chart', data: cv.toDataURL('image/png').split(',')[1] });
   });
   Chart.defaults.color = prevColor;
   try {
     const blob = await buildDocx(reportMd, imgs, JSZip).generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Ripoti-Vunja-AI.docx'; a.click();
-  } catch (x) { $('err').textContent = 'Kosa la kutengeneza Word: ' + x.message; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Vunja-AI-Report.docx'; a.click();
+  } catch (x) { $('err').textContent = 'Could not create Word file: ' + x.message; }
 });
-$('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Imenakiliwa'; });
+$('copy').addEventListener('click', () => { navigator.clipboard.writeText(reportMd); $('copy').textContent = 'Copied'; });
 function isTotalRow(r) { return Object.values(r).some((v) => typeof v === 'string' && /^\s*(grand\s*)?(total|jumla)s?\s*:?\s*$/i.test(v)); }
 function fmtDate(d) { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function dkey(v) {
@@ -215,7 +211,7 @@ function drawCharts(specs, box) {
     const wrap = document.createElement('div'); wrap.className = 'chartbox';
     const cv = document.createElement('canvas'); wrap.appendChild(cv); box.appendChild(wrap);
     new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
-      data: { labels: c.labels, datasets: [{ label: sp.y || 'Idadi', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      data: { labels: c.labels, datasets: [{ label: sp.y || 'Count', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
       options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
   });
 }
@@ -252,12 +248,12 @@ function mdToDocx(md) {
 }
 function wImg(rid, id) {
   const cx = 5486400, cy = 2743200;
-  return '<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Grafu ' + id + '"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="' + id + '" name="chart' + id + '.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+  return '<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Chart ' + id + '"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="' + id + '" name="chart' + id + '.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 }
 function buildDocx(md, imgs, JSZipLib) {
   const z = new JSZipLib();
   const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
-  let body = wPara('Ripoti ya Vunja AI', { b: 1, sz: 36 }, '<w:spacing w:after="60"/>') + wPara(fmtDate(new Date()), { sz: 20 }, '<w:spacing w:after="200"/>') + mdToDocx(md);
+  let body = wPara('Vunja AI Report', { b: 1, sz: 36 }, '<w:spacing w:after="60"/>') + wPara(fmtDate(new Date()), { sz: 20 }, '<w:spacing w:after="200"/>') + mdToDocx(md);
   let rels = '';
   imgs.forEach((im, i) => {
     body += wPara(im.title, { b: 1 }, '<w:keepNext/><w:spacing w:before="240" w:after="80"/>') + wImg('rIdImg' + (i + 1), i + 1);
@@ -283,10 +279,10 @@ async function ask() {
       body: JSON.stringify(Object.assign({}, lastPayload, { history, question: q }))
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Imeshindwa');
+    if (!r.ok) throw new Error(d.error || 'Failed');
     history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
     const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
-  } catch (x) { add('ai', 'Kosa: ' + esc(x.message)); }
+  } catch (x) { add('ai', 'Error: ' + esc(x.message)); }
   $('send').disabled = false;
 }
 $('send').addEventListener('click', ask);
