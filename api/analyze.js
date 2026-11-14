@@ -30,13 +30,19 @@ module.exports = async (req, res) => {
     '"exclude" (optional) is a list of x values to leave out of the chart. ' +
     'Use column names exactly as listed under COLUMNS. Do not write chart numbers yourself; the app computes them. Add 1 to 3 charts. Chart titles must be in English.';
 
-  const systemText = (question ? chatSystem : reportSystem) + chartRule;
+  const accuracyRule =
+    ' ACCURACY RULE: Every total, count, ranking, average and percentage you state must be copied or calculated directly from the EXACT SUMMARY AND TABLES section. ' +
+    'The DATA SAMPLE is incomplete and only gives context: never add up or count rows from it. ' +
+    'If a breakdown you need is not in the tables, say you do not have that exact figure and suggest which chart or question would show it. ' +
+    'When you give a ranking, follow the table order as given (highest first) and double-check it before answering.';
+
+  const systemText = (question ? chatSystem : reportSystem) + accuracyRule + chartRule;
 
   const prompt =
     'USER REQUEST: ' + (request || 'Analyze this data and write a full report.') +
-    '\n\nSUMMARY STATISTICS (computed from all the data):\n' + summary +
+    '\n\nEXACT SUMMARY AND TABLES (computed by the app from ALL rows):\n' + summary +
     '\n\nCOLUMNS: ' + (columns || []).join(' | ') +
-    '\n\nDATA SAMPLE (CSV):\n' + sample;
+    '\n\nDATA SAMPLE (CSV, incomplete, context only, never add it up):\n' + sample;
 
   const turns = [{ role: 'user', text: prompt }]
     .concat((history || []).map((h) => ({ role: h.role === 'model' ? 'assistant' : 'user', text: h.text })));
