@@ -140,6 +140,42 @@ $('file').addEventListener('change', async (e) => {
     $('go').disabled = !rows.length;
   } catch (x) { $('err').textContent = 'Could not read one of the files. Make sure they are Excel or CSV.'; }
 });
+function exactTables() {
+  const isNum = (h) => rows.filter((r) => r[h] !== '' && !isNaN(Number(r[h]))).length > rows.length * 0.7;
+  const isDateCol = (h) => rows.filter((r) => dkey(r[h])).length > rows.length * 0.7;
+  const dateCols = headers.filter(isDateCol);
+  const numCols = headers.filter((h) => isNum(h) && !isDateCol(h) && !/^id$/i.test(h));
+  const catCols = headers.filter((h) => !isNum(h) && !isDateCol(h));
+  const fmt = (n) => Math.round(n * 100) / 100;
+  const group = (keyFn, valFn) => {
+    const g = {};
+    rows.forEach((r) => { const k = keyFn(r); if (k === null || k === '') return; const o = g[k] || (g[k] = { sum: 0, c: 0 }); o.c++; const v = Number(valFn(r)); if (!isNaN(v)) o.sum += v; });
+    return g;
+  };
+  const top = (g, key) => Object.entries(g).sort((a, b) => b[1][key] - a[1][key]).slice(0, 15).map(([k, o]) => k + '=' + fmt(o[key])).join(', ');
+  const out = [];
+  catCols.forEach((c) => {
+    const distinct = new Set(rows.map((r) => String(r[c]))).size;
+    if (distinct < 2 || distinct > 100) return;
+    out.push('By ' + c + ' → number of rows (top 15, highest first): ' + top(group((r) => String(r[c]), () => 0), 'c'));
+    numCols.forEach((nc) => out.push('By ' + c + ' → ' + nc + ' (sum, top 15, highest first): ' + top(group((r) => String(r[c]), (r) => r[nc]), 'sum')));
+  });
+  dateCols.slice(0, 1).forEach((dc) => {
+    ['month', 'quarter', 'day'].forEach((unit) => {
+      const keyFn = (r) => {
+        const k = dkey(r[dc]); if (!k) return null;
+        if (unit === 'month') return k.slice(0, 7);
+        if (unit === 'quarter') return k.slice(0, 4) + '-Q' + (Math.floor((Number(k.slice(5, 7)) - 1) / 3) + 1);
+        return k;
+      };
+      const g0 = group(keyFn, () => 0);
+      const keys = Object.keys(g0).sort(); const use = unit === 'day' ? keys.slice(-31) : keys;
+      out.push('By ' + unit + ' (' + dc + ') → number of rows: ' + use.map((k) => k + '=' + g0[k].c).join(', '));
+      numCols.forEach((nc) => { const g = group(keyFn, (r) => r[nc]); out.push('By ' + unit + ' (' + dc + ') → ' + nc + ' (sum): ' + use.map((k) => k + '=' + fmt(g[k].sum)).join(', ')); });
+    });
+  });
+  return out.join('\n');
+}
 function sampleRows() { const step = Math.max(1, Math.ceil(rows.length / 400)); return rows.filter((_, i) => i % step === 0); }
 
 function stats() {
@@ -162,7 +198,7 @@ $('go').addEventListener('click', async () => {
     const sample = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(sampleRows()));
     const r = await fetch('/api/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lastPayload = { summary: 'Total rows: ' + rows.length + '\n' + stats(), sample, request: $('req').value, lang: 'en', columns: headers })
+      body: JSON.stringify(lastPayload = { summary: 'Total rows: ' + rows.length + '\n' + stats() + '\n\nEXACT TABLES (counted by the app from ALL rows):\n' + exactTables(), sample, request: $('req').value, lang: 'en', columns: headers })
     });
     const d = await readJson(r);
     if (!r.ok || d.error) throw new Error(d.error || 'Failed');
