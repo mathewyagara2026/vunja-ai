@@ -14,7 +14,20 @@
 @media(prefers-color-scheme:dark){:root{--bg:#0e1626;--ink:#e8eef7;--muted:#9aa7ba;--line:#26344d;--card:#16213a;--teal:#38c2ad;--saffron:#f4b73a}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 "Source Sans 3",system-ui,sans-serif}
-main{max-width:760px;margin:0 auto;padding:32px 18px 60px}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);gap:24px;max-width:1120px;margin:0 auto;padding:32px 18px 60px;align-items:start}
+main{max-width:760px;min-width:0;margin:0;padding:0}
+#hist{position:sticky;top:16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+#hist h2{font:800 20px "Bricolage Grotesque",sans-serif;margin:0 0 10px}
+#histList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:70vh;overflow:auto}
+#histList li{display:flex;gap:4px}
+.hitem{flex:1;text-align:left;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;min-width:0}
+.hitem.on{border-color:var(--teal);box-shadow:inset 3px 0 0 var(--teal)}
+.hname{display:block;font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hmeta{display:block;font-size:13px;color:var(--muted)}
+.hdel{background:transparent;color:var(--muted);border:1px solid var(--line);padding:0 10px;font-size:18px;line-height:1}
+.hnote{font-size:13px;color:var(--muted);margin:10px 0 0}
+.hclear{background:transparent;color:var(--muted);border:1px solid var(--line);padding:6px 12px;font-size:14px;margin-top:10px}
+@media(max-width:860px){.layout{grid-template-columns:1fr}#hist{position:static}#histList{max-height:220px}}
 h1{font:800 clamp(44px,12vw,84px)/.95 "Bricolage Grotesque",sans-serif;margin:0 0 10px;letter-spacing:-.02em}
 h1 span{color:var(--saffron)}
 .lead{color:var(--muted);margin:0 0 28px;max-width:52ch}
@@ -43,6 +56,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 </style>
 </head>
 <body>
+<div class="layout">
+<aside id="hist" aria-label="Analyzed files">
+  <h2>Analyzed files</h2>
+  <ul id="histList"></ul>
+  <p class="hnote" id="histNote">Saved in this browser only.</p>
+  <button class="hclear" id="histClear" hidden>Clear history</button>
+</aside>
 <main>
 <h1>Vunja <span>AI</span></h1>
 <p class="lead">Upload your statistics file. Vunja AI analyzes it and writes a report you can download.</p>
@@ -78,13 +98,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
   </div>
 </section>
 </main>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let rows = [], headers = [], reportMd = '', lastPayload = null, history = [], lastSpecs = [];
+let rows = [], headers = [], reportMd = '', lastPayload = null, history = [], lastSpecs = [], lastCharts = [], currentId = null, rowsId = null, fileNames = [];
 
 $('file').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files); if (!files.length) return;
+  rowsId = null; fileNames = files.map((f) => f.name);
   $('err').textContent = ''; $('go').disabled = true;
   try {
     const parts = [];
@@ -145,8 +167,11 @@ $('go').addEventListener('click', async () => {
     const d = await readJson(r);
     if (!r.ok || d.error) throw new Error(d.error || 'Failed');
     const sp = splitCharts(d.report); lastSpecs = sp.specs; reportMd = sp.txt; $('out').innerHTML = md(reportMd);
-    $('charts').innerHTML = ''; drawCharts(sp.specs, $('charts')); $('result').hidden = false;
+    lastCharts = sp.specs.slice(0, 3).map(toComputed).filter(Boolean);
+    $('charts').innerHTML = ''; drawComputed(lastCharts, $('charts')); $('result').hidden = false;
     history = [{ role: 'model', text: d.report }]; $('log').innerHTML = ''; $('chat').hidden = false;
+    currentId = Date.now(); rowsId = currentId;
+    upsertEntry({ id: currentId, time: new Date().toISOString(), files: fileNames.slice(), rows: rows.length, request: $('req').value, report: reportMd, charts: lastCharts, payload: lastPayload, history: history });
     $('result').scrollIntoView({ behavior: 'smooth' });
   } catch (x) { $('err').textContent = 'Error: ' + x.message; }
   $('go').disabled = false; $('go').textContent = 'Analyze data';
@@ -176,14 +201,13 @@ function md(t) {
 $('word').addEventListener('click', async () => {
   const imgs = [];
   const prevColor = Chart.defaults.color; Chart.defaults.color = '#000';
-  lastSpecs.slice(0, 3).forEach((sp) => {
-    const c = computeChart(sp); if (!c || !c.labels.length) return;
+  lastCharts.forEach((c) => {
     const cv = document.createElement('canvas'); cv.width = 900; cv.height = 450;
-    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
-      data: { labels: c.labels, datasets: [{ label: sp.y || 'Count', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
-      options: { animation: false, responsive: false, devicePixelRatio: 1, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } },
+    new Chart(cv, { type: c.type,
+      data: { labels: c.labels, datasets: [{ label: c.y, data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      options: { animation: false, responsive: false, devicePixelRatio: 1, plugins: { legend: { display: false }, title: { display: true, text: c.title } } },
       plugins: [{ id: 'bg', beforeDraw(ch) { const x = ch.ctx; x.save(); x.globalCompositeOperation = 'destination-over'; x.fillStyle = '#fff'; x.fillRect(0, 0, ch.width, ch.height); x.restore(); } }] });
-    imgs.push({ title: sp.title || 'Chart', data: cv.toDataURL('image/png').split(',')[1] });
+    imgs.push({ title: c.title, data: cv.toDataURL('image/png').split(',')[1] });
   });
   Chart.defaults.color = prevColor;
   try {
@@ -227,17 +251,21 @@ function computeChart(sp) {
   else { e.sort((a, b) => b[1] - a[1]); e = e.slice(0, sp.top || 10); }
   return { labels: e.map((x) => x[0]), vals: e.map((x) => Math.round(x[1] * 100) / 100) };
 }
-function drawCharts(specs, box) {
+function toComputed(sp) {
+  const c = computeChart(sp); if (!c || !c.labels.length) return null;
+  return { title: sp.title || 'Chart', type: sp.type === 'line' ? 'line' : 'bar', y: sp.y || 'Count', labels: c.labels, vals: c.vals };
+}
+function drawComputed(list, box) {
   Chart.defaults.color = getComputedStyle(document.body).color;
-  specs.slice(0, 3).forEach((sp) => {
-    const c = computeChart(sp); if (!c || !c.labels.length) return;
+  list.forEach((c) => {
     const wrap = document.createElement('div'); wrap.className = 'chartbox';
     const cv = document.createElement('canvas'); wrap.appendChild(cv); box.appendChild(wrap);
-    new Chart(cv, { type: sp.type === 'line' ? 'line' : 'bar',
-      data: { labels: c.labels, datasets: [{ label: sp.y || 'Count', data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
-      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: sp.title || '' } } } });
+    new Chart(cv, { type: c.type,
+      data: { labels: c.labels, datasets: [{ label: c.y, data: c.vals, backgroundColor: '#0f7b6c', borderColor: '#0f7b6c', tension: .25 }] },
+      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: c.title } } } });
   });
 }
+function drawCharts(specs, box) { drawComputed(specs.slice(0, 3).map(toComputed).filter(Boolean), box); }
 
 function xe(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function wRuns(t, o) {
@@ -310,12 +338,49 @@ async function ask() {
     const d = await readJson(r);
     if (!r.ok || d.error) throw new Error(d.error || 'Failed');
     history.push({ role: 'user', text: q }, { role: 'model', text: d.report });
-    const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); drawCharts(sp.specs, m);
+    const sp = splitCharts(d.report); const m = add('ai', md(sp.txt)); if (rowsId !== null && rowsId === currentId) drawCharts(sp.specs, m);
+    persist();
   } catch (x) { add('ai', 'Error: ' + esc(x.message)); }
   $('send').disabled = false;
 }
 $('send').addEventListener('click', ask);
 $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+
+const HKEY = 'vunja_history_v1';
+function loadHist() { try { return JSON.parse(localStorage.getItem(HKEY) || '[]'); } catch (e) { return []; } }
+function saveHist(list) {
+  list = list.slice(0, 30);
+  while (list.length) { try { localStorage.setItem(HKEY, JSON.stringify(list)); return true; } catch (e) { list.pop(); } }
+  return false;
+}
+function upsertEntry(e) { const list = loadHist().filter((x) => x.id !== e.id); list.unshift(e); saveHist(list); renderHist(); }
+function persist() { const list = loadHist(); const e = list.find((x) => x.id === currentId); if (e) { e.history = history; saveHist(list); } }
+function renderHist() {
+  const list = loadHist();
+  $('histList').innerHTML = list.length ? list.map((e) => {
+    const name = esc(e.files && e.files.length ? e.files.join(', ') : 'Analysis');
+    const when = new Date(e.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    return '<li><button class="hitem' + (e.id === currentId ? ' on' : '') + '" data-open="' + e.id + '" title="' + name + '"><span class="hname">' + name + '</span><span class="hmeta">' + esc(when) + ' · ' + e.rows + ' rows</span></button><button class="hdel" data-del="' + e.id + '" aria-label="Delete this saved analysis" title="Delete">×</button></li>';
+  }).join('') : '<li class="hnote">No analyses yet. Files you analyze will appear here.</li>';
+  $('histClear').hidden = !list.length;
+}
+function openEntry(id) {
+  const e = loadHist().find((x) => x.id === id); if (!e) return;
+  currentId = id; lastPayload = e.payload; history = e.history || []; reportMd = e.report; lastCharts = e.charts || []; lastSpecs = [];
+  $('out').innerHTML = md(reportMd); $('charts').innerHTML = ''; drawComputed(lastCharts, $('charts'));
+  $('result').hidden = false; $('chat').hidden = false; $('log').innerHTML = '';
+  history.slice(1).forEach((h) => add(h.role === 'user' ? 'me' : 'ai', h.role === 'user' ? esc(h.text) : md(splitCharts(h.text).txt)));
+  $('info').textContent = 'Opened saved report: ' + (e.files || []).join(', ') + '. To ask new questions about it, use the chat below.';
+  $('err').textContent = ''; renderHist();
+  $('result').scrollIntoView({ behavior: 'smooth' });
+}
+$('histList').addEventListener('click', (ev) => {
+  const o = ev.target.closest('[data-open]'), d = ev.target.closest('[data-del]');
+  if (o) openEntry(Number(o.dataset.open));
+  else if (d) { saveHist(loadHist().filter((x) => x.id !== Number(d.dataset.del))); renderHist(); }
+});
+$('histClear').addEventListener('click', () => { if (confirm('Delete all saved analyses from this browser?')) { saveHist([]); renderHist(); } });
+renderHist();
 </script>
 </body>
 </html>
