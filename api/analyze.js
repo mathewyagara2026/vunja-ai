@@ -44,25 +44,43 @@ module.exports = async (req, res) => {
 
   const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
+  // Time budget: stay safely under the 60s limit set in vercel.json, and always answer with JSON.
+  const BUDGET = Number(process.env.VUNJA_BUDGET_MS) || 55000;
+  const start = Date.now();
+  const remaining = () => BUDGET - (Date.now() - start);
+  const firstCap = Math.round(BUDGET * 0.64);
+  const minLeft = Math.round(BUDGET * 0.15);
+
+  async function timedFetch(url, opts, ms) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ctl.signal })); }
+    finally { clearTimeout(t); }
+  }
+
   async function viaClaude() {
     const models = [process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5', 'claude-haiku-5-5'];
     let lastError = 'Claude failed.';
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: models[attempt < 2 ? 0 : 1],
-          max_tokens: 4096,
-          system: systemText,
-          messages: turns.map((t) => ({ role: t.role, content: t.text })),
-        }),
-      });
-      const data = await r.json();
-      if (r.ok) return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') || 'No answer was returned.';
-      lastError = (data.error && data.error.message) || lastError;
-      if (![429, 500, 503, 529].includes(r.status)) break;
-      await wait(2000);
+    for (let attempt = 0; attempt < 4 && (attempt === 0 || remaining() > minLeft); attempt++) {
+      try {
+        const r = await timedFetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: models[attempt === 0 ? 0 : 1],
+            max_tokens: question ? 1500 : 4096,
+            system: systemText,
+            messages: turns.map((t) => ({ role: t.role, content: t.text })),
+          }),
+        }, attempt === 0 ? firstCap : Math.max(remaining() - 500, 1000));
+        const data = await r.json();
+        if (r.ok) return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') || 'No answer was returned.';
+        lastError = (data.error && data.error.message) || lastError;
+        if (![429, 500, 503, 529].includes(r.status)) break;
+      } catch (e) {
+        lastError = e.name === 'AbortError' ? 'The AI service is slow or busy right now.' : e.message;
+      }
+      await wait(Math.min(1000, Math.max(remaining() - minLeft, 0)));
     }
     throw new Error(lastError);
   }
@@ -74,19 +92,24 @@ module.exports = async (req, res) => {
       contents: turns.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.text }] })),
     });
     let lastError = 'Gemini failed.';
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const r = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + models[attempt < 2 ? 0 : 1] + ':generateContent',
-        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey }, body }
-      );
-      const data = await r.json();
-      if (r.ok) {
-        const parts = (((data.candidates || [])[0] || {}).content || {}).parts;
-        return parts ? parts.map((p) => p.text).join('') : 'No answer was returned.';
+    for (let attempt = 0; attempt < 4 && (attempt === 0 || remaining() > minLeft); attempt++) {
+      try {
+        const r = await timedFetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + models[attempt === 0 ? 0 : 1] + ':generateContent',
+          { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey }, body },
+          attempt === 0 ? firstCap : Math.max(remaining() - 500, 1000)
+        );
+        const data = await r.json();
+        if (r.ok) {
+          const parts = (((data.candidates || [])[0] || {}).content || {}).parts;
+          return parts ? parts.map((p) => p.text).join('') : 'No answer was returned.';
+        }
+        lastError = (data.error && data.error.message) || lastError;
+        if (r.status !== 429 && r.status !== 503) break;
+      } catch (e) {
+        lastError = e.name === 'AbortError' ? 'The AI service is slow or busy right now.' : e.message;
       }
-      lastError = (data.error && data.error.message) || lastError;
-      if (r.status !== 429 && r.status !== 503) break;
-      await wait(2000);
+      await wait(Math.min(1000, Math.max(remaining() - minLeft, 0)));
     }
     throw new Error(lastError);
   }
@@ -95,6 +118,6 @@ module.exports = async (req, res) => {
     const report = claudeKey ? await viaClaude() : await viaGemini();
     return res.status(200).json({ report });
   } catch (e) {
-    return res.status(502).json({ error: e.message });
+    return res.status(502).json({ error: e.message + ' Please try again in a minute.' });
   }
 };
